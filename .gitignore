@@ -1,0 +1,59 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/build/
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Secrets / credentials
+*.pem
+*.key
+
+# Eval results (keep runner, not outputs)
+evals/results/*.json
+evals/results/*.csv
+
+# Render
+.render/
+
+# Tunnel
+ngrok.yml
+
+# Logs
+logs/
+*.log

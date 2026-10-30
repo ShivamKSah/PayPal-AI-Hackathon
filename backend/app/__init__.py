@@ -1,0 +1,1 @@
+"""Mandate application package."""
