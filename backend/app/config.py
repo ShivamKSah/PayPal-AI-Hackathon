@@ -25,7 +25,12 @@ PAYPAL_BASE_URL: str = (
 
 # ── AI / LLM ──────────────────────────────────────────────────
 LLM_API_KEY: str = os.environ.get("LLM_API_KEY", "")
-DAILY_LLM_BUDGET: float = float(os.environ.get("DAILY_LLM_BUDGET", "5.00"))
+LLM_PROVIDER: str = os.environ.get("LLM_PROVIDER", "gemini")
+_daily_budget_raw = os.environ.get("DAILY_LLM_BUDGET", "5.00")
+try:
+    DAILY_LLM_BUDGET: float = float(_daily_budget_raw)
+except ValueError:
+    DAILY_LLM_BUDGET: float = 999999.0
 
 # ── Catalog ────────────────────────────────────────────────────
 CATALOG_API_KEY: str = os.environ.get("CATALOG_API_KEY", "")

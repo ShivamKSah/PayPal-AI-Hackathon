@@ -11,7 +11,7 @@ import logging
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
-from backend.app.config import LLM_API_KEY
+from backend.app.config import LLM_API_KEY, LLM_PROVIDER
 
 logger = logging.getLogger("mandate.policy.constraints")
 
@@ -25,6 +25,7 @@ class ExtractedConstraint(BaseModel):
 
 class ConstraintExtractionResult(BaseModel):
     constraints: List[ExtractedConstraint] = Field(default_factory=list)
+    extraction_method: str = "regex_fallback"
 
 
 def extract_constraints(instruction_text: str) -> ConstraintExtractionResult:
@@ -108,11 +109,11 @@ def _extract_via_rules(text: str) -> ConstraintExtractionResult:
             )
             break
 
-    return ConstraintExtractionResult(constraints=constraints)
+    return ConstraintExtractionResult(constraints=constraints, extraction_method="regex_fallback")
 
 
 def _extract_via_llm(text: str) -> ConstraintExtractionResult:
-    """Call external LLM for structured extraction with strict JSON output."""
+    """Call external LLM (Gemini or Anthropic) for structured extraction with strict JSON output."""
     import httpx
 
     prompt = (
@@ -123,21 +124,44 @@ def _extract_via_llm(text: str) -> ConstraintExtractionResult:
         '{"constraints": [{"field": "string", "target_value": "string or number", "unit": "string or null", "raw_mention": "string"}]}'
     )
 
-    # Generic OpenAI-compatible endpoint call
+    provider = (LLM_PROVIDER or "gemini").lower()
+    is_anthropic = provider == "anthropic" or (LLM_API_KEY and LLM_API_KEY.startswith("sk-ant"))
+
     with httpx.Client(timeout=10.0) as client:
-        resp = client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {LLM_API_KEY}"},
-            json={
-                "model": "gpt-4o-mini",
-                "messages": [{"role": "user", "content": prompt}],
-                "response_format": {"type": "json_object"},
-            },
-        )
-        if resp.status_code == 200:
-            data = resp.json()["choices"][0]["message"]["content"]
-            parsed = json.loads(data)
-            return ConstraintExtractionResult(**parsed)
+        if is_anthropic:
+            resp = client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": LLM_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": "claude-3-5-haiku-20241022",
+                    "max_tokens": 1024,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+            if resp.status_code == 200:
+                data = resp.json()["content"][0]["text"]
+                parsed = json.loads(data)
+                constraints = [ExtractedConstraint(**c) for c in parsed.get("constraints", [])]
+                return ConstraintExtractionResult(constraints=constraints, extraction_method="llm_anthropic")
+        else:
+            # Default to Gemini
+            resp = client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={LLM_API_KEY}",
+                headers={"Content-Type": "application/json"},
+                json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"response_mime_type": "application/json"},
+                },
+            )
+            if resp.status_code == 200:
+                data = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+                parsed = json.loads(data)
+                constraints = [ExtractedConstraint(**c) for c in parsed.get("constraints", [])]
+                return ConstraintExtractionResult(constraints=constraints, extraction_method="llm_gemini")
 
     return _extract_via_rules(text)
 

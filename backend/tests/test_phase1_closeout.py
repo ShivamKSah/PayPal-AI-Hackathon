@@ -45,6 +45,7 @@ class DummyMandate(BaseModel):
     allow_recurring: bool = False
     velocity_per_hour: int = 5
     near_limit_pct: int = 80
+    escalate_first_merchant: bool = False
 
 
 @pytest.fixture(autouse=True)

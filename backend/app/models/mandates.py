@@ -18,6 +18,7 @@ class MandateBase(SQLModel):
     allow_recurring: bool = Field(default=False)
     velocity_per_hour: int = Field(default=5)
     near_limit_pct: int = Field(default=80)
+    escalate_first_merchant: bool = Field(default=False)
     status: str = Field(default="ACTIVE")
     expires_at: datetime
 
@@ -41,6 +42,7 @@ class MandateCreate(SQLModel):
     allow_recurring: bool = False
     velocity_per_hour: int = 5
     near_limit_pct: int = 80
+    escalate_first_merchant: bool = False
     expires_at: datetime
     vault_token_ref: Optional[str] = None
 
@@ -48,3 +50,7 @@ class MandateCreate(SQLModel):
 class MandateRead(MandateBase):
     id: str
     created_at: datetime
+
+
+class MandateResponse(MandateRead):
+    session_token: Optional[str] = None

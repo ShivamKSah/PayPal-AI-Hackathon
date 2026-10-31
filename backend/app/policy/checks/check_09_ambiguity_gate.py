@@ -7,6 +7,7 @@ from backend.app.policy.constraints import ExtractedConstraint, compare_constrai
 def check_9_ambiguity_gate(
     constraints: List[ExtractedConstraint],
     catalog_specs: Dict[str, Any],
+    extraction_method: str = "regex_fallback",
 ) -> Dict[str, Any]:
     """
     Check 9:
@@ -22,6 +23,7 @@ def check_9_ambiguity_gate(
             "passed": True,
             "reason": "No ambiguous dimension/attribute constraints in instruction",
             "verdict_on_fail": "ESCALATE",
+            "extraction_method": extraction_method,
         }
 
     all_present, missing_fields = compare_constraints(constraints, catalog_specs)
@@ -36,6 +38,7 @@ def check_9_ambiguity_gate(
                 f"does not specify these field(s). Escalating to human."
             ),
             "verdict_on_fail": "ESCALATE",
+            "extraction_method": extraction_method,
         }
 
     return {
@@ -44,5 +47,6 @@ def check_9_ambiguity_gate(
         "passed": True,
         "reason": f"All requested constraint fields {[c.field for c in constraints]} are verified in catalog",
         "verdict_on_fail": "ESCALATE",
+        "extraction_method": extraction_method,
     }
 

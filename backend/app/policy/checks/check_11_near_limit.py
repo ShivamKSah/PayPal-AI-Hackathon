@@ -30,12 +30,13 @@ def check_11_near_limit(
             "verdict_on_fail": "ESCALATE",
         }
 
-    if is_first_purchase_from_merchant:
+    escalate_first_merchant = getattr(mandate, "escalate_first_merchant", False)
+    if is_first_purchase_from_merchant and escalate_first_merchant:
         return {
             "check_id": 11,
             "name": "near_limit_review",
             "passed": False,
-            "reason": "First purchase from this merchant under this mandate. Escalating for human confirmation.",
+            "reason": "First purchase from this merchant under this mandate (escalate_first_merchant is enabled). Escalating for human confirmation.",
             "verdict_on_fail": "ESCALATE",
         }
 

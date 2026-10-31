@@ -115,7 +115,11 @@ class PolicyEngine:
             )
             extraction_res = ConstraintExtractionResult(constraints=[])
         catalog_specs = primary_product.specs if primary_product else {}
-        hit_9 = check_9_ambiguity_gate(extraction_res.constraints, catalog_specs)
+        hit_9 = check_9_ambiguity_gate(
+            extraction_res.constraints,
+            catalog_specs,
+            extraction_method=extraction_res.extraction_method,
+        )
         rule_hits.append(hit_9)
 
         # Check 10: Recurring Billing

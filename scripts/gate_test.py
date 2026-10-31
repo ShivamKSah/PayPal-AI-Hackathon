@@ -62,6 +62,15 @@ def _log(step: str, msg: str):
     print('='*60)
 
 
+def _mask_token(val: str | None) -> str:
+    """Mask vault token IDs and customer IDs for terminal display."""
+    if not val:
+        return ""
+    if len(val) <= 8:
+        return "***REDACTED***"
+    return f"{val[:4]}...{val[-4:]}"
+
+
 def _redact_dict(data: dict) -> dict:
     redacted = {}
     for k, v in data.items():
@@ -70,7 +79,12 @@ def _redact_dict(data: dict) -> dict:
             redacted[k] = _redact_dict(v)
         elif isinstance(v, list):
             redacted[k] = [_redact_dict(i) if isinstance(i, dict) else i for i in v]
-        elif k_lower in ("access_token", "client_secret", "refresh_token", "vault_id") or "token" in k_lower:
+        elif (
+            k_lower in ("access_token", "client_secret", "refresh_token", "vault_id", "customer_id", "payer_id")
+            or "token" in k_lower
+            or "vault" in k_lower
+            or "customer" in k_lower
+        ):
             if isinstance(v, str) and len(v) > 8:
                 redacted[k] = f"{v[:4]}...{v[-4:]} [REDACTED]"
             else:
@@ -429,7 +443,7 @@ def capture_order(client: httpx.Client, token: str, order_id: str) -> tuple[str,
 
     if vault_token_id:
         print(f"✓ Capture ID: {capture_id}")
-        print(f"✓ Vault token ID: {vault_token_id}")
+        print(f"✓ Vault token ID: {_mask_token(vault_token_id)}")
     else:
         print(f"⚠ Capture succeeded (ID: {capture_id}) but NO vault token found.")
         print(f"  This may mean the vault token arrives asynchronously via webhook.")
@@ -449,7 +463,7 @@ def charge_with_vault_token(
     Tests both documented shapes and reports which works.
     Returns (order_id, capture_id, results_dict).
     """
-    _log("C", f"Charging $3.00 with vault token {vault_token_id} (NO browser)")
+    _log("C", f"Charging $3.00 with vault token {_mask_token(vault_token_id)} (NO browser)")
 
     results = {"shape1": None, "shape2": None, "working_shape": None}
 

@@ -1,6 +1,6 @@
 """Database models package."""
 
-from backend.app.models.mandates import Mandate, MandateCreate, MandateRead
+from backend.app.models.mandates import Mandate, MandateCreate, MandateRead, MandateResponse
 from backend.app.models.proposals import Proposal, ProposalCreate, ProposalRead
 from backend.app.models.payments import Payment, PaymentRead
 from backend.app.models.cases import Case, CaseRead
@@ -13,6 +13,7 @@ __all__ = [
     "Mandate",
     "MandateCreate",
     "MandateRead",
+    "MandateResponse",
     "Proposal",
     "ProposalCreate",
     "ProposalRead",

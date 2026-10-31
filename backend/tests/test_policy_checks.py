@@ -35,6 +35,7 @@ class DummyMandate(BaseModel):
     allow_recurring: bool = False
     velocity_per_hour: int = 5
     near_limit_pct: int = 80
+    escalate_first_merchant: bool = False
 
 
 # ── Check 1: Mandate Active ───────────────────────────────────
@@ -285,6 +286,79 @@ def test_check_9_missing_width_escalates():
     assert "width" in res["reason"]
 
 
+def test_check_9_with_recorded_gemini_llm_response(monkeypatch):
+    """Verify constraint extraction parses a recorded Gemini LLM response and tags method."""
+    from unittest.mock import MagicMock
+    import httpx
+    from backend.app.policy import constraints as constraints_module
+
+    recorded_gemini_response = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "text": '{"constraints": [{"field": "width", "target_value": 160, "unit": "cm", "raw_mention": "160 cm"}]}'
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = recorded_gemini_response
+
+    monkeypatch.setattr(constraints_module, "LLM_API_KEY", "AIzaSyTestKey123")
+    monkeypatch.setattr(constraints_module, "LLM_PROVIDER", "gemini")
+    monkeypatch.setattr(httpx.Client, "post", lambda self, *args, **kwargs: mock_resp)
+
+    res = constraints_module.extract_constraints("buy a 160 cm wide standing desk")
+    assert res.extraction_method == "llm_gemini"
+    assert len(res.constraints) == 1
+    assert res.constraints[0].field == "width"
+    assert res.constraints[0].target_value == 160
+
+    gate_result = check_9_ambiguity_gate(res.constraints, {"height": 75}, extraction_method=res.extraction_method)
+    assert gate_result["passed"] is False
+    assert gate_result["verdict_on_fail"] == "ESCALATE"
+    assert gate_result["extraction_method"] == "llm_gemini"
+
+
+def test_check_9_with_recorded_anthropic_llm_response(monkeypatch):
+    """Verify constraint extraction parses a recorded Anthropic LLM response and tags method."""
+    from unittest.mock import MagicMock
+    import httpx
+    from backend.app.policy import constraints as constraints_module
+
+    recorded_anthropic_response = {
+        "content": [
+            {
+                "text": '{"constraints": [{"field": "color", "target_value": "walnut", "unit": null, "raw_mention": "walnut"}]}'
+            }
+        ]
+    }
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = recorded_anthropic_response
+
+    monkeypatch.setattr(constraints_module, "LLM_API_KEY", "sk-ant-api03-testkey")
+    monkeypatch.setattr(constraints_module, "LLM_PROVIDER", "anthropic")
+    monkeypatch.setattr(httpx.Client, "post", lambda self, *args, **kwargs: mock_resp)
+
+    res = constraints_module.extract_constraints("buy a walnut finish desk")
+    assert res.extraction_method == "llm_anthropic"
+    assert len(res.constraints) == 1
+    assert res.constraints[0].field == "color"
+    assert res.constraints[0].target_value == "walnut"
+
+    gate_result = check_9_ambiguity_gate(res.constraints, {"color": "walnut"}, extraction_method=res.extraction_method)
+    assert gate_result["passed"] is True
+    assert gate_result["extraction_method"] == "llm_anthropic"
+
+
 # ── Check 10: Recurring Billing ───────────────────────────────
 
 def test_check_10_non_recurring():
@@ -321,8 +395,16 @@ def test_check_11_at_or_above_80_pct_escalates():
     assert res["verdict_on_fail"] == "ESCALATE"
 
 
-def test_check_11_first_merchant_purchase_escalates():
-    mandate = DummyMandate(per_txn_cap_cents=20000, near_limit_pct=80)
+def test_check_11_first_merchant_purchase_default_passes():
+    # When escalate_first_merchant is False (default), first purchase from allowlisted merchant passes
+    mandate = DummyMandate(per_txn_cap_cents=20000, near_limit_pct=80, escalate_first_merchant=False)
+    res = check_11_near_limit(mandate, total_cents=5000, is_first_purchase_from_merchant=True)
+    assert res["passed"] is True
+
+
+def test_check_11_first_merchant_purchase_escalates_when_configured():
+    # When escalate_first_merchant is True, first purchase escalates
+    mandate = DummyMandate(per_txn_cap_cents=20000, near_limit_pct=80, escalate_first_merchant=True)
     res = check_11_near_limit(mandate, total_cents=5000, is_first_purchase_from_merchant=True)
     assert res["passed"] is False
     assert res["verdict_on_fail"] == "ESCALATE"

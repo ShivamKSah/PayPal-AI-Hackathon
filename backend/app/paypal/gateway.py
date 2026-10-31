@@ -13,6 +13,7 @@ import httpx
 
 from backend.app.config import PAYPAL_BASE_URL, PAYPAL_WEBHOOK_ID
 from backend.app.paypal.auth import get_access_token
+from backend.app.security import mask_token
 
 logger = logging.getLogger("mandate.paypal.gateway")
 
@@ -27,8 +28,13 @@ class PaymentGateway(ABC):
     """Abstract payment gateway interface."""
 
     @abstractmethod
-    def grant_mandate(self, mandate_id: str, return_url: str, cancel_url: str) -> Dict[str, Any]:
+    def grant_mandate(self, mandate_id: str, return_url: str, cancel_url: str, request_id: Optional[str] = None) -> Dict[str, Any]:
         """Initiate mandate funding / authorization grant."""
+        pass
+
+    @abstractmethod
+    def capture_grant(self, order_id: str, request_id: Optional[str] = None) -> Dict[str, Any]:
+        """Capture grant order, extract vault token, and refund the $1.00."""
         pass
 
     @abstractmethod
@@ -69,11 +75,20 @@ class VaultGateway(PaymentGateway):
     def __init__(self, base_url: str = PAYPAL_BASE_URL):
         self.base_url = base_url
 
-    def grant_mandate(self, mandate_id: str, return_url: str, cancel_url: str) -> Dict[str, Any]:
+    def grant_mandate(
+        self,
+        mandate_id: str,
+        return_url: str,
+        cancel_url: str,
+        request_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Create a $1.00 vault setup order for the Grant screen.
+        Sends fresh PayPal-Request-Id header.
         On buyer approval, token id is extracted from payment_source.paypal.attributes.vault.id.
         """
+        import uuid
+        req_id = request_id or f"req-grant-{uuid.uuid4()}"
         token = get_access_token()
         order_body = {
             "intent": "CAPTURE",
@@ -109,6 +124,7 @@ class VaultGateway(PaymentGateway):
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
+                    "PayPal-Request-Id": req_id,
                 },
                 json=order_body,
             )
@@ -122,10 +138,86 @@ class VaultGateway(PaymentGateway):
                     approve_url = link["href"]
                     break
 
+            logger.info(f"Created grant order_id={order_id} (req_id={req_id})")
             return {
                 "order_id": order_id,
                 "approve_url": approve_url,
                 "status": data.get("status"),
+            }
+
+    def capture_grant(self, order_id: str, request_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Capture the $1.00 vault setup order, extract the vault token,
+        and immediately refund the $1.00 test authorization.
+        """
+        import uuid
+        req_id = request_id or f"req-cap-grant-{uuid.uuid4()}"
+        token = get_access_token()
+
+        with httpx.Client(timeout=25.0) as client:
+            resp = client.post(
+                f"{self.base_url}/v2/checkout/orders/{order_id}/capture",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    "PayPal-Request-Id": req_id,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            status = data.get("status")
+            vault_token_id = (
+                data.get("payment_source", {})
+                .get("paypal", {})
+                .get("attributes", {})
+                .get("vault", {})
+                .get("id")
+            )
+            customer_id = (
+                data.get("payment_source", {})
+                .get("paypal", {})
+                .get("attributes", {})
+                .get("vault", {})
+                .get("customer", {})
+                .get("id")
+            )
+
+            masked_vault = mask_token(vault_token_id)
+            masked_customer = mask_token(customer_id)
+            logger.info(
+                f"Grant order {order_id} captured with status {status}. "
+                f"VaultToken={masked_vault}, Customer={masked_customer}"
+            )
+
+            # Extract capture ID to issue $1.00 refund
+            capture_id = None
+            for pu in data.get("purchase_units", []):
+                for c in pu.get("payments", {}).get("captures", []):
+                    capture_id = c["id"]
+                    break
+
+            refund_data = None
+            if capture_id:
+                try:
+                    refund_req = f"req-ref-grant-{uuid.uuid4()}"
+                    refund_data = self.refund(
+                        capture_id=capture_id,
+                        amount_cents=100,
+                        note="Mandate authorization setup refund",
+                        request_id=refund_req,
+                    )
+                    logger.info(f"Grant $1.00 refunded successfully (capture_id={capture_id})")
+                except Exception as exc:
+                    logger.warning(f"Failed to auto-refund $1.00 grant: {exc}")
+
+            return {
+                "order_id": order_id,
+                "status": status,
+                "vault_token_id": vault_token_id,
+                "customer_id": customer_id,
+                "capture_id": capture_id,
+                "refund": refund_data,
             }
 
     def charge(
@@ -142,6 +234,8 @@ class VaultGateway(PaymentGateway):
         """
         token = get_access_token()
         amount_str = cents_to_paypal_str(amount_cents)
+        masked_tok = mask_token(vault_token)
+        logger.info(f"Charging via vault_id={masked_tok}, amount={amount_cents}¢, request_id={request_id}")
 
         order_body = {
             "intent": "CAPTURE",
@@ -199,6 +293,8 @@ class VaultGateway(PaymentGateway):
         """Execute refund against a captured PayPal payment."""
         token = get_access_token()
         amount_str = cents_to_paypal_str(amount_cents)
+        masked_tok = mask_token(vault_token)
+        logger.info(f"Charging via vault_id={masked_tok}, amount={amount_cents}¢, request_id={request_id}")
 
         body = {
             "amount": {"currency_code": "USD", "value": amount_str},
@@ -269,8 +365,11 @@ class BuyerApprovalGateway(PaymentGateway):
     def __init__(self, base_url: str = PAYPAL_BASE_URL):
         self.base_url = base_url
 
-    def grant_mandate(self, mandate_id: str, return_url: str, cancel_url: str) -> Dict[str, Any]:
+    def grant_mandate(self, mandate_id: str, return_url: str, cancel_url: str, request_id: Optional[str] = None) -> Dict[str, Any]:
         return {"status": "MOCK_APPROVED", "mandate_id": mandate_id}
+
+    def capture_grant(self, order_id: str, request_id: Optional[str] = None) -> Dict[str, Any]:
+        return {"status": "COMPLETED", "order_id": order_id, "vault_token_id": "mock-vault-token"}
 
     def charge(
         self,
@@ -282,6 +381,8 @@ class BuyerApprovalGateway(PaymentGateway):
         """Creates standard order requiring browser payer approval."""
         token = get_access_token()
         amount_str = cents_to_paypal_str(amount_cents)
+        masked_tok = mask_token(vault_token)
+        logger.info(f"Charging via vault_id={masked_tok}, amount={amount_cents}¢, request_id={request_id}")
 
         order_body = {
             "intent": "CAPTURE",
@@ -324,6 +425,8 @@ class BuyerApprovalGateway(PaymentGateway):
     ) -> Dict[str, Any]:
         token = get_access_token()
         amount_str = cents_to_paypal_str(amount_cents)
+        masked_tok = mask_token(vault_token)
+        logger.info(f"Charging via vault_id={masked_tok}, amount={amount_cents}¢, request_id={request_id}")
 
         body = {
             "amount": {"currency_code": "USD", "value": amount_str},
