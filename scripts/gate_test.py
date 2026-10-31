@@ -65,15 +65,25 @@ def _log(step: str, msg: str):
 def _redact_dict(data: dict) -> dict:
     redacted = {}
     for k, v in data.items():
+        k_lower = k.lower()
         if isinstance(v, dict):
             redacted[k] = _redact_dict(v)
         elif isinstance(v, list):
             redacted[k] = [_redact_dict(i) if isinstance(i, dict) else i for i in v]
-        elif k.lower() in ("access_token", "client_secret", "refresh_token"):
+        elif k_lower in ("access_token", "client_secret", "refresh_token", "vault_id") or "token" in k_lower:
             if isinstance(v, str) and len(v) > 8:
                 redacted[k] = f"{v[:4]}...{v[-4:]} [REDACTED]"
             else:
                 redacted[k] = "[REDACTED]"
+        elif "email" in k_lower:
+            if isinstance(v, str) and "@" in v:
+                parts = v.split("@")
+                redacted[k] = f"{parts[0][:2]}***@{parts[1]} [REDACTED]"
+            else:
+                redacted[k] = "[REDACTED]"
+        elif isinstance(v, str) and "@" in v and not v.startswith("http"):
+            parts = v.split("@")
+            redacted[k] = f"{parts[0][:2]}***@{parts[1]} [REDACTED]"
         else:
             redacted[k] = v
     return redacted
@@ -140,6 +150,143 @@ def get_access_token(client: httpx.Client) -> tuple[str, int]:
     return token, expires_in
 
 
+def _inspect_order_on_error(
+    client: httpx.Client,
+    token: str,
+    order_id: str | None,
+    resp: httpx.Response,
+    action_name: str,
+):
+    print(f"\n{'!'*60}")
+    print(f"FATAL: {action_name} failed with status {resp.status_code}")
+    print(f"{'!'*60}\n")
+
+    debug_id = (
+        resp.headers.get("PayPal-Debug-Id")
+        or resp.headers.get("paypal-debug-id")
+        or "NOT_FOUND"
+    )
+    try:
+        err_json = resp.json()
+        if isinstance(err_json, dict):
+            if debug_id == "NOT_FOUND":
+                debug_id = err_json.get("debug_id", "NOT_FOUND")
+            err_body_redacted = _redact_dict(err_json)
+        else:
+            err_body_redacted = err_json
+        err_str = json.dumps(err_body_redacted, indent=2)
+    except Exception:
+        err_str = resp.text[:2000]
+
+    print(f"--- {action_name} Error Details ---")
+    print(f"PayPal-Debug-Id: {debug_id}")
+    print(f"Error Body:\n{err_str}")
+    print(f"--- /{action_name} Error Details ---\n")
+
+    if order_id:
+        print(f"Fetching Order Details via GET /v2/checkout/orders/{order_id} ...")
+        get_resp = client.get(
+            f"{BASE_URL}/v2/checkout/orders/{order_id}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+        )
+        if get_resp.status_code in (200, 201):
+            order_data = get_resp.json()
+            order_status = order_data.get("status", "UNKNOWN")
+            payer_info = order_data.get("payer", {})
+            payment_source = order_data.get("payment_source", {})
+
+            paypal_info = payment_source.get("paypal", {})
+            funding_source = (
+                paypal_info.get("funding_source")
+                or payment_source.get("funding_source")
+                or (list(payment_source.keys())[0] if payment_source else "UNKNOWN")
+            )
+
+            print(f"\n--- Order Status & Inspection (Order: {order_id}) ---")
+            print(f"Status: {order_status}")
+            print(f"Funding Source (if returned): {funding_source}")
+            print(f"Payer Info:\n{json.dumps(_redact_dict(payer_info), indent=2)}")
+            print(f"Payment Source:\n{json.dumps(_redact_dict(payment_source), indent=2)}")
+            print(f"--- /Order Status & Inspection ---\n")
+        else:
+            print(f"Failed to fetch order details ({get_resp.status_code}): {get_resp.text[:500]}")
+
+
+# ── Plain Order Flow (no vault) ────────────────────────────────
+
+def create_plain_order(client: httpx.Client, token: str) -> tuple[str, str]:
+    """Create a plain $5.00 order without vault attributes. Returns (order_id, approve_link)."""
+    _log("A-PLAIN", "Creating plain order ($5.00 USD, NO vault attributes)")
+
+    order_body = {
+        "intent": "CAPTURE",
+        "purchase_units": [
+            {
+                "reference_id": "mandate-gate-plain",
+                "amount": {
+                    "currency_code": "USD",
+                    "value": "5.00",
+                },
+                "description": "Mandate gate test – plain order (no vault)",
+            }
+        ],
+        "payment_source": {
+            "paypal": {
+                "experience_context": {
+                    "return_url": RETURN_URL,
+                    "cancel_url": CANCEL_URL,
+                    "user_action": "PAY_NOW",
+                    "payment_method_preference": "IMMEDIATE_PAYMENT_REQUIRED",
+                }
+            }
+        },
+    }
+
+    req_id = _request_id()
+    resp = client.post(
+        f"{BASE_URL}/v2/checkout/orders",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "PayPal-Request-Id": req_id,
+        },
+        json=order_body,
+    )
+    _log_response("Create Plain Order", resp)
+
+    if resp.status_code not in (200, 201):
+        _inspect_order_on_error(client, token, None, resp, "Create Plain Order")
+        sys.exit(1)
+
+    data = resp.json()
+    order_id = data["id"]
+
+    approve_link = None
+    for link in data.get("links", []):
+        if link["rel"] in ("approve", "payer-action"):
+            approve_link = link["href"]
+            break
+
+    if not approve_link:
+        print("FATAL: No approve/payer-action link in order response.")
+        print("Available links:", [l["rel"] for l in data.get("links", [])])
+        _inspect_order_on_error(client, token, order_id, resp, "Locate Approve Link")
+        sys.exit(1)
+
+    print(f"✓ Plain order created: {order_id}")
+    print(f"✓ PayPal-Request-Id: {req_id}")
+    print(f"\n{'*'*60}")
+    print(f"ACTION REQUIRED: Open this link in a browser and approve")
+    print(f"with your PERSONAL sandbox buyer account:")
+    print(f"\n  {approve_link}\n")
+    print(f"{'*'*60}")
+
+    return order_id, approve_link
+
+
 # ── Step A: Create vault-enabled order ─────────────────────────
 
 def create_vault_order(client: httpx.Client, token: str) -> tuple[str, str]:
@@ -190,7 +337,7 @@ def create_vault_order(client: httpx.Client, token: str) -> tuple[str, str]:
     _log_response("Create Vault Order", resp)
 
     if resp.status_code not in (200, 201):
-        print(f"FATAL: Order creation failed with status {resp.status_code}")
+        _inspect_order_on_error(client, token, None, resp, "Create Vault Order")
         sys.exit(1)
 
     data = resp.json()
@@ -237,10 +384,22 @@ def capture_order(client: httpx.Client, token: str, order_id: str) -> tuple[str,
     _log_response("Capture Order", resp)
 
     if resp.status_code not in (200, 201):
-        print(f"FATAL: Capture failed with status {resp.status_code}")
+        _inspect_order_on_error(client, token, order_id, resp, "Capture Order")
         sys.exit(1)
 
     data = resp.json()
+    capture_status = data.get("status", "UNKNOWN")
+    print(f"✓ Capture status: {capture_status}")
+
+    # Funding source on successful capture
+    ps = data.get("payment_source", {}).get("paypal", {})
+    funding_source = (
+        ps.get("funding_source")
+        or data.get("payment_source", {}).get("funding_source")
+        or (list(data.get("payment_source", {}).keys())[0] if data.get("payment_source") else None)
+    )
+    if funding_source:
+        print(f"✓ Funding source: {funding_source}")
 
     # Extract capture ID
     capture_id = None
@@ -479,7 +638,11 @@ def charge_with_vault_token(
 # ── Step D: Partial refund (60%) ───────────────────────────────
 
 def partial_refund(
-    client: httpx.Client, token: str, capture_id: str, original_cents: int
+    client: httpx.Client,
+    token: str,
+    capture_id: str,
+    original_cents: int,
+    order_id: str | None = None,
 ) -> str | None:
     """Refund 60% of the capture. Returns refund_id or None."""
     refund_cents = int(Decimal(original_cents) * Decimal("0.60"))
@@ -508,7 +671,7 @@ def partial_refund(
     _log_response("Partial Refund", resp)
 
     if resp.status_code not in (200, 201):
-        print(f"✗ Refund failed with status {resp.status_code}")
+        _inspect_order_on_error(client, token, order_id, resp, "Partial Refund")
         return None
 
     data = resp.json()
@@ -606,12 +769,19 @@ def main():
         action="store_true",
         help="Skip webhook check (Step E) to run only steps (a)-(d)",
     )
+    parser.add_argument(
+        "--no-vault",
+        action="store_true",
+        help="Run plain $5.00 order test without vault attributes (order -> capture -> 60%% refund)",
+    )
     args = parser.parse_args()
 
     print(f"\n{'#'*60}")
     print(f"  MANDATE — Phase 0 Gate Test")
     print(f"  Environment: {PAYPAL_ENV}")
     print(f"  Base URL: {BASE_URL}")
+    if args.no_vault:
+        print("  Mode: PLAIN ORDER FLOW (--no-vault)")
     if args.skip_webhook:
         print("  Mode: Webhook check skipped (--skip-webhook)")
     print(f"{'#'*60}\n")
@@ -623,6 +793,54 @@ def main():
         # Step 0: OAuth
         access_token, expires_in = get_access_token(client)
 
+        # ── Plain order flow (--no-vault) ──────────────────────
+        if args.no_vault:
+            print("\n--- RUNNING PLAIN ORDER TEST (--no-vault) ---")
+            order_id, approve_link = create_plain_order(client, access_token)
+
+            print("\n" + "=" * 60)
+            input(
+                "Press ENTER after you have approved the payment in your browser...\n"
+                "> "
+            )
+
+            # Refresh token in case it expired while waiting
+            access_token, _ = get_access_token(client)
+
+            # Capture order
+            capture_id, _ = capture_order(client, access_token, order_id)
+
+            # Refund 60% ($3.00)
+            refund_id = partial_refund(
+                client, access_token, capture_id, 500, order_id=order_id
+            )
+
+            # Webhook check (if not skipped)
+            if args.skip_webhook:
+                print("\n" + "=" * 60)
+                print("[E] Skipping webhook verification (--skip-webhook)")
+                print("=" * 60)
+            else:
+                test_webhook_setup(client, access_token)
+
+            # Summary for plain order flow
+            print(f"\n\n{'#'*60}")
+            print("GATE TEST SUMMARY (--no-vault)")
+            print(f"{'#'*60}")
+            print(f"  OAuth token lifetime:   {expires_in}s")
+            print(f"  Order created:          {'✓' if order_id else '✗'} {order_id or ''}")
+            print(f"  Capture:                {'✓' if capture_id else '✗'} {capture_id or ''}")
+            print(f"  Partial refund (60%):   {'✓' if refund_id else '✗'} {refund_id or ''}")
+            if args.skip_webhook:
+                print("  Webhook configured:     (skipped via --skip-webhook)")
+            else:
+                print(f"  Webhook configured:     {'✓' if PAYPAL_WEBHOOK_ID else '⚠ not set'}")
+            print(f"  Channel3 API key:       {'✓ set' if CATALOG_API_KEY else '⚠ not set (mock fallback)'}")
+            print(f"\n  PLAIN FLOW STATUS:      {'PASS' if (order_id and capture_id and refund_id) else 'FAIL'}")
+            print(f"{'#'*60}\n")
+            return
+
+        # ── Default Vault Flow ─────────────────────────────────
         # Step A: Create vault order
         order_id, approve_link = create_vault_order(client, access_token)
 
@@ -667,7 +885,11 @@ def main():
         refund_id = None
         if refund_capture_id:
             refund_id = partial_refund(
-                client, access_token, refund_capture_id, refund_original_cents
+                client,
+                access_token,
+                refund_capture_id,
+                refund_original_cents,
+                order_id=vault_order_id or order_id,
             )
 
         # Step E: Webhook check

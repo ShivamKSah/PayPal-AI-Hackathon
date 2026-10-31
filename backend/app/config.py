@@ -29,6 +29,10 @@ DAILY_LLM_BUDGET: float = float(os.environ.get("DAILY_LLM_BUDGET", "5.00"))
 
 # ── Catalog ────────────────────────────────────────────────────
 CATALOG_API_KEY: str = os.environ.get("CATALOG_API_KEY", "")
+MOCK_CATALOG: bool = (
+    os.environ.get("MOCK_CATALOG", "").lower() in ("true", "1", "yes")
+    or not bool(CATALOG_API_KEY)
+)
 
 # ── Database ───────────────────────────────────────────────────
 DATABASE_URL: str = os.environ.get("DATABASE_URL", "sqlite:///./mandate.db")

@@ -1,7 +1,13 @@
 # Environment
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+
+# Database
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
 
 # Python
 __pycache__/
