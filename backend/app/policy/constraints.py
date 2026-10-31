@@ -11,7 +11,7 @@ import logging
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
-from backend.app.config import LLM_API_KEY, LLM_PROVIDER
+from backend.app.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
 
 logger = logging.getLogger("mandate.policy.constraints")
 
@@ -26,19 +26,20 @@ class ExtractedConstraint(BaseModel):
 class ConstraintExtractionResult(BaseModel):
     constraints: List[ExtractedConstraint] = Field(default_factory=list)
     extraction_method: str = "regex_fallback"
+    model_reported: Optional[str] = None
 
 
 def extract_constraints(instruction_text: str) -> ConstraintExtractionResult:
     """
     Extract structured dimension / attribute constraints from natural language instruction.
-    Uses LLM if LLM_API_KEY is configured, else deterministic regex extraction.
+    Uses OpenRouter OpenAI-compatible API if LLM_API_KEY is configured,
+    else falls back to deterministic regex extraction.
     """
     if LLM_API_KEY:
         try:
-            # When an LLM API key is present, attempt structured extraction
-            return _extract_via_llm(instruction_text)
+            return _extract_via_openrouter(instruction_text)
         except Exception as exc:
-            logger.warning(f"LLM extraction failed: {exc}. Falling back to rule-based parser.")
+            logger.warning(f"OpenRouter LLM extraction failed: {exc}. Falling back to rule-based parser.")
 
     return _extract_via_rules(instruction_text)
 
@@ -49,27 +50,30 @@ def _extract_via_rules(text: str) -> ConstraintExtractionResult:
     lower = text.lower()
 
     # Pattern for dimension: e.g. "160 cm", "160cm wide", "width 160", "120 cm desk"
-    width_match = re.search(r'(\d+)\s*(?:cm|mm|in|inch|inches)?\s*(?:wide|width)?', lower)
-    if "width" in lower:
-        m = re.search(r'width\s*(?:of|:)?\s*(\d+)\s*(cm|mm|in)?', lower)
+    if "width" in lower or "wide" in lower:
+        m = re.search(r'(\d+)\s*(cm|mm|in)?\s*wide', lower) or re.search(r'width\s*(?:of|:)?\s*(\d+)\s*(cm|mm|in)?', lower)
         if m:
+            val = int(m.group(1))
+            unit = m.group(2) if len(m.groups()) >= 2 and m.group(2) else "cm"
             constraints.append(
                 ExtractedConstraint(
                     field="width",
-                    target_value=int(m.group(1)),
-                    unit=m.group(2) or "cm",
+                    target_value=val,
+                    unit=unit,
                     raw_mention=m.group(0),
                 )
             )
-        elif width_match:
-            constraints.append(
-                ExtractedConstraint(
-                    field="width",
-                    target_value=int(width_match.group(1)),
-                    unit="cm",
-                    raw_mention=width_match.group(0),
+        else:
+            width_match = re.search(r'(\d+)\s*(?:cm|mm|in|inch|inches)?', lower)
+            if width_match:
+                constraints.append(
+                    ExtractedConstraint(
+                        field="width",
+                        target_value=int(width_match.group(1)),
+                        unit="cm",
+                        raw_mention=width_match.group(0),
+                    )
                 )
-            )
     elif re.search(r'\b(\d{2,3})\s*(?:cm)?\s*(?:standing\s+)?desk\b', lower):
         # e.g., "160 cm desk"
         m = re.search(r'\b(\d{2,3})\s*(?:cm)?\s*(?:standing\s+)?desk\b', lower)
@@ -112,58 +116,113 @@ def _extract_via_rules(text: str) -> ConstraintExtractionResult:
     return ConstraintExtractionResult(constraints=constraints, extraction_method="regex_fallback")
 
 
-def _extract_via_llm(text: str) -> ConstraintExtractionResult:
-    """Call external LLM (Gemini or Anthropic) for structured extraction with strict JSON output."""
+def _extract_via_openrouter(text: str) -> ConstraintExtractionResult:
+    """
+    Call OpenRouter's OpenAI-compatible API for structured constraint extraction
+    using strict JSON-schema structured output. Logs the model name each response reports.
+    """
     import httpx
 
-    prompt = (
-        "Extract any specific physical or technical constraints requested in this instruction "
-        "(e.g., width, height, depth, color, material, capacity, connectivity).\n"
-        f"Instruction: {text}\n"
-        "Return ONLY a valid JSON object matching this schema:\n"
-        '{"constraints": [{"field": "string", "target_value": "string or number", "unit": "string or null", "raw_mention": "string"}]}'
-    )
+    json_schema = {
+        "name": "extracted_constraints",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "constraints": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "field": {
+                                "type": "string",
+                                "description": "Normalized attribute name (e.g., width, height, color, dpi)",
+                            },
+                            "target_value": {
+                                "type": ["string", "number"],
+                                "description": "Target numeric value or string description",
+                            },
+                            "unit": {
+                                "type": ["string", "null"],
+                                "description": "Unit of measurement (e.g. cm, mm, in), or null",
+                            },
+                            "raw_mention": {
+                                "type": ["string", "null"],
+                                "description": "Exact text snippet mentioned in user instruction",
+                            },
+                        },
+                        "required": ["field", "target_value"],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["constraints"],
+            "additionalProperties": False,
+        },
+    }
 
-    provider = (LLM_PROVIDER or "gemini").lower()
-    is_anthropic = provider == "anthropic" or (LLM_API_KEY and LLM_API_KEY.startswith("sk-ant"))
+    payload = {
+        "model": LLM_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a strict constraint extraction parser. "
+                    "Extract physical or technical constraints requested in the buyer instruction "
+                    "(e.g., width, height, depth, color, material, capacity, connectivity). "
+                    "Return ONLY valid JSON conforming to the requested schema."
+                ),
+            },
+            {
+                "role": "user",
+                "content": text,
+            },
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": json_schema,
+        },
+    }
 
-    with httpx.Client(timeout=10.0) as client:
-        if is_anthropic:
-            resp = client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": LLM_API_KEY,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": "claude-3-5-haiku-20241022",
-                    "max_tokens": 1024,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-            )
-            if resp.status_code == 200:
-                data = resp.json()["content"][0]["text"]
-                parsed = json.loads(data)
-                constraints = [ExtractedConstraint(**c) for c in parsed.get("constraints", [])]
-                return ConstraintExtractionResult(constraints=constraints, extraction_method="llm_anthropic")
-        else:
-            # Default to Gemini
-            resp = client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={LLM_API_KEY}",
-                headers={"Content-Type": "application/json"},
-                json={
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"response_mime_type": "application/json"},
-                },
-            )
-            if resp.status_code == 200:
-                data = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-                parsed = json.loads(data)
-                constraints = [ExtractedConstraint(**c) for c in parsed.get("constraints", [])]
-                return ConstraintExtractionResult(constraints=constraints, extraction_method="llm_gemini")
+    headers = {
+        "Authorization": f"Bearer {LLM_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://github.com/mandate",
+        "X-Title": "Mandate Policy Engine",
+    }
+
+    url = f"{LLM_BASE_URL.rstrip('/')}/chat/completions"
+
+    with httpx.Client(timeout=15.0) as client:
+        resp = client.post(url, headers=headers, json=payload)
+        if resp.status_code == 200:
+            res_data = resp.json()
+            reported_model = res_data.get("model") or LLM_MODEL
+            logger.info(f"OpenRouter constraint extraction response received from model: {reported_model}")
+
+            choices = res_data.get("choices", [])
+            if choices:
+                raw_content = choices[0].get("message", {}).get("content", "{}")
+                parsed = json.loads(raw_content)
+                constraints = [
+                    ExtractedConstraint(**c) for c in parsed.get("constraints", [])
+                ]
+                return ConstraintExtractionResult(
+                    constraints=constraints,
+                    extraction_method="llm_openrouter",
+                    model_reported=reported_model,
+                )
+
+        logger.warning(
+            f"OpenRouter returned status {resp.status_code}: {resp.text[:200]}. Falling back to rules."
+        )
 
     return _extract_via_rules(text)
+
+
+def _extract_via_llm(text: str) -> ConstraintExtractionResult:
+    """Backward compatibility alias for _extract_via_openrouter."""
+    return _extract_via_openrouter(text)
 
 
 def compare_constraints(

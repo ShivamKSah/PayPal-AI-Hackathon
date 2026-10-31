@@ -119,6 +119,7 @@ class PolicyEngine:
             extraction_res.constraints,
             catalog_specs,
             extraction_method=extraction_res.extraction_method,
+            model_reported=getattr(extraction_res, "model_reported", None),
         )
         rule_hits.append(hit_9)
 

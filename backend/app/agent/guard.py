@@ -44,7 +44,10 @@ def guard(
     guarded_tools: List[Dict[str, Any]] = []
 
     for tool in tools:
-        tool_name = tool.get("name", "") if isinstance(tool, dict) else getattr(tool, "__name__", "")
+        if isinstance(tool, dict):
+            tool_name = tool.get("name") or tool.get("function", {}).get("name", "")
+        else:
+            tool_name = getattr(tool, "__name__", "")
         tool_lower = tool_name.lower()
 
         # Reject any banned keyword

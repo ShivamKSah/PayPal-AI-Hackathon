@@ -25,7 +25,8 @@ PAYPAL_BASE_URL: str = (
 
 # ── AI / LLM ──────────────────────────────────────────────────
 LLM_API_KEY: str = os.environ.get("LLM_API_KEY", "")
-LLM_PROVIDER: str = os.environ.get("LLM_PROVIDER", "gemini")
+LLM_BASE_URL: str = os.environ.get("LLM_BASE_URL", "https://openrouter.ai/api/v1")
+LLM_MODEL: str = os.environ.get("LLM_MODEL", "google/gemini-2.5-flash")
 _daily_budget_raw = os.environ.get("DAILY_LLM_BUDGET", "5.00")
 try:
     DAILY_LLM_BUDGET: float = float(_daily_budget_raw)

@@ -77,6 +77,68 @@ def test_shopping_agent_tool_isolation():
     assert sanitized_names == ["search_catalog", "propose_purchase"]
 
 
+def test_shopping_agent_with_recorded_openrouter_tool_calls(monkeypatch):
+    """Verify shopping agent handles OpenRouter tool calling with reported model logging."""
+    import httpx
+    from backend.app.agent.agent import ShoppingAgent
+
+    # Mock tool call response for propose_purchase
+    tool_call_resp = {
+        "id": "gen-agent-1234",
+        "model": "google/gemini-2.5-flash",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_prop_1",
+                            "type": "function",
+                            "function": {
+                                "name": "propose_purchase",
+                                "arguments": json.dumps({
+                                    "cart": {
+                                        "merchant_id": "MERCHANT-TECH-STORE",
+                                        "currency": "USD",
+                                        "items": [
+                                            {
+                                                "product_id": "mouse-ergonomic",
+                                                "quantity": 1,
+                                                "unit_price_cents": 4500,
+                                            }
+                                        ],
+                                        "total_cents": 4500,
+                                    },
+                                    "reasoning": "Selected ergonomic mouse via OpenRouter tool calling",
+                                }),
+                            },
+                        }
+                    ],
+                }
+            }
+        ],
+    }
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = tool_call_resp
+
+    monkeypatch.setattr("backend.app.agent.agent.LLM_API_KEY", "sk-or-v1-agent-testkey")
+    monkeypatch.setattr("backend.app.agent.agent.LLM_MODEL", "google/gemini-2.5-flash")
+    monkeypatch.setattr(httpx.Client, "post", lambda self, *args, **kwargs: mock_resp)
+
+    dummy_mandate = MagicMock()
+    dummy_mandate.id = "mandate-agent-tool-test"
+    agent = ShoppingAgent(mandate=dummy_mandate)
+
+    result = agent.run("buy an ergonomic mouse")
+    assert result["status"] == "PROPOSED"
+    assert result["model_reported"] == "google/gemini-2.5-flash"
+    assert result["proposal"]["cart_json"]["total_cents"] == 4500
+    assert "OpenRouter tool calling" in result["proposal"]["agent_reasoning"]
+
+
 # ── 3. Session Token Scope Tests ─────────────────────────────────────
 
 def test_session_token_signing_and_verification():

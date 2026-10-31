@@ -1,6 +1,6 @@
 """Check 9: Ambiguity Gate."""
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from backend.app.policy.constraints import ExtractedConstraint, compare_constraints
 
 
@@ -8,6 +8,7 @@ def check_9_ambiguity_gate(
     constraints: List[ExtractedConstraint],
     catalog_specs: Dict[str, Any],
     extraction_method: str = "regex_fallback",
+    model_reported: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Check 9:
@@ -24,6 +25,7 @@ def check_9_ambiguity_gate(
             "reason": "No ambiguous dimension/attribute constraints in instruction",
             "verdict_on_fail": "ESCALATE",
             "extraction_method": extraction_method,
+            "model_reported": model_reported,
         }
 
     all_present, missing_fields = compare_constraints(constraints, catalog_specs)
@@ -39,6 +41,7 @@ def check_9_ambiguity_gate(
             ),
             "verdict_on_fail": "ESCALATE",
             "extraction_method": extraction_method,
+            "model_reported": model_reported,
         }
 
     return {
@@ -48,5 +51,6 @@ def check_9_ambiguity_gate(
         "reason": f"All requested constraint fields {[c.field for c in constraints]} are verified in catalog",
         "verdict_on_fail": "ESCALATE",
         "extraction_method": extraction_method,
+        "model_reported": model_reported,
     }
 

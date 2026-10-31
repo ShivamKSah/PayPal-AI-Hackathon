@@ -286,77 +286,83 @@ def test_check_9_missing_width_escalates():
     assert "width" in res["reason"]
 
 
-def test_check_9_with_recorded_gemini_llm_response(monkeypatch):
-    """Verify constraint extraction parses a recorded Gemini LLM response and tags method."""
+def test_check_9_with_recorded_openrouter_llm_response(monkeypatch):
+    """Verify constraint extraction parses a recorded OpenRouter response using JSON-schema structured output."""
     from unittest.mock import MagicMock
+    import json
     import httpx
     from backend.app.policy import constraints as constraints_module
 
-    recorded_gemini_response = {
-        "candidates": [
+    recorded_openrouter_response = {
+        "id": "gen-test-9999",
+        "model": "google/gemini-2.5-flash",
+        "choices": [
             {
-                "content": {
-                    "parts": [
-                        {
-                            "text": '{"constraints": [{"field": "width", "target_value": 160, "unit": "cm", "raw_mention": "160 cm"}]}'
-                        }
-                    ]
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps({
+                        "constraints": [
+                            {
+                                "field": "width",
+                                "target_value": 160,
+                                "unit": "cm",
+                                "raw_mention": "160 cm",
+                            }
+                        ]
+                    }),
                 }
             }
-        ]
+        ],
     }
 
     mock_resp = MagicMock()
     mock_resp.status_code = 200
-    mock_resp.json.return_value = recorded_gemini_response
+    mock_resp.json.return_value = recorded_openrouter_response
 
-    monkeypatch.setattr(constraints_module, "LLM_API_KEY", "AIzaSyTestKey123")
-    monkeypatch.setattr(constraints_module, "LLM_PROVIDER", "gemini")
+    monkeypatch.setattr(constraints_module, "LLM_API_KEY", "sk-or-v1-testkey123")
+    monkeypatch.setattr(constraints_module, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setattr(constraints_module, "LLM_MODEL", "google/gemini-2.5-flash")
     monkeypatch.setattr(httpx.Client, "post", lambda self, *args, **kwargs: mock_resp)
 
     res = constraints_module.extract_constraints("buy a 160 cm wide standing desk")
-    assert res.extraction_method == "llm_gemini"
+    assert res.extraction_method == "llm_openrouter"
+    assert res.model_reported == "google/gemini-2.5-flash"
     assert len(res.constraints) == 1
     assert res.constraints[0].field == "width"
     assert res.constraints[0].target_value == 160
 
-    gate_result = check_9_ambiguity_gate(res.constraints, {"height": 75}, extraction_method=res.extraction_method)
+    gate_result = check_9_ambiguity_gate(
+        res.constraints,
+        {"height": 75},
+        extraction_method=res.extraction_method,
+        model_reported=res.model_reported,
+    )
     assert gate_result["passed"] is False
     assert gate_result["verdict_on_fail"] == "ESCALATE"
-    assert gate_result["extraction_method"] == "llm_gemini"
+    assert gate_result["extraction_method"] == "llm_openrouter"
+    assert gate_result["model_reported"] == "google/gemini-2.5-flash"
 
 
-def test_check_9_with_recorded_anthropic_llm_response(monkeypatch):
-    """Verify constraint extraction parses a recorded Anthropic LLM response and tags method."""
-    from unittest.mock import MagicMock
+def test_check_9_fallback_to_regex_on_error(monkeypatch):
+    """Verify check 9 falls back to regex parser when OpenRouter call fails."""
     import httpx
     from backend.app.policy import constraints as constraints_module
-
-    recorded_anthropic_response = {
-        "content": [
-            {
-                "text": '{"constraints": [{"field": "color", "target_value": "walnut", "unit": null, "raw_mention": "walnut"}]}'
-            }
-        ]
-    }
+    from unittest.mock import MagicMock
 
     mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = recorded_anthropic_response
+    mock_resp.status_code = 500
+    mock_resp.text = "Internal error"
 
-    monkeypatch.setattr(constraints_module, "LLM_API_KEY", "sk-ant-api03-testkey")
-    monkeypatch.setattr(constraints_module, "LLM_PROVIDER", "anthropic")
+    monkeypatch.setattr(constraints_module, "LLM_API_KEY", "sk-or-v1-testkey123")
     monkeypatch.setattr(httpx.Client, "post", lambda self, *args, **kwargs: mock_resp)
 
-    res = constraints_module.extract_constraints("buy a walnut finish desk")
-    assert res.extraction_method == "llm_anthropic"
-    assert len(res.constraints) == 1
-    assert res.constraints[0].field == "color"
-    assert res.constraints[0].target_value == "walnut"
+    res = constraints_module.extract_constraints("buy a 160 cm wide desk")
+    assert res.extraction_method == "regex_fallback"
+    assert any(c.field == "width" for c in res.constraints)
 
-    gate_result = check_9_ambiguity_gate(res.constraints, {"color": "walnut"}, extraction_method=res.extraction_method)
+    gate_result = check_9_ambiguity_gate(res.constraints, {"width": 160}, extraction_method=res.extraction_method)
     assert gate_result["passed"] is True
-    assert gate_result["extraction_method"] == "llm_anthropic"
+    assert gate_result["extraction_method"] == "regex_fallback"
 
 
 # ── Check 10: Recurring Billing ───────────────────────────────
