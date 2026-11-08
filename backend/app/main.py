@@ -308,6 +308,15 @@ def complete_mandate_grant(
     }
 
 
+@app.get("/mandates/active", response_model=Optional[MandateRead])
+def get_active_mandate(session_id: Optional[str] = None, db: Session = Depends(get_session)):
+    """Fetch current active mandate for session."""
+    query = select(Mandate).where(Mandate.status == "ACTIVE")
+    if session_id:
+        query = query.where(Mandate.session_id == session_id)
+    return db.exec(query.order_by(Mandate.created_at.desc())).first()
+
+
 @app.get("/mandates/{mandate_id}", response_model=MandateRead)
 def get_mandate(mandate_id: str, db: Session = Depends(get_session)):
     """Fetch mandate details."""
@@ -1109,9 +1118,9 @@ def run_agent_workflow(
 
     return {
         "status": "PROPOSED",
-        "proposal": proposal,
+        "proposal": ProposalRead.model_validate(proposal).model_dump(mode="json"),
         "verdict": eval_result.verdict,
-        "payment": payment,
+        "payment": PaymentRead.model_validate(payment).model_dump(mode="json") if payment else None,
         "llm_fallback": is_fallback,
     }
 
@@ -1141,7 +1150,11 @@ def human_approve_proposal(proposal_id: str, request: Request, db: Session = Dep
     )
 
     payment = execute_proposal(proposal.id, request, db)
-    return {"status": "APPROVED", "proposal": proposal, "payment": payment}
+    return {
+        "status": "APPROVED",
+        "proposal": ProposalRead.model_validate(proposal).model_dump(mode="json"),
+        "payment": PaymentRead.model_validate(payment).model_dump(mode="json") if payment else None,
+    }
 
 
 @app.post("/proposals/{proposal_id}/human_reject")
@@ -1167,7 +1180,7 @@ def human_reject_proposal(proposal_id: str, db: Session = Depends(get_session)):
         ref_id=proposal.id,
         payload={"cart_hash": proposal.cart_hash},
     )
-    return {"status": "REJECTED", "proposal": proposal}
+    return {"status": "REJECTED", "proposal": ProposalRead.model_validate(proposal).model_dump(mode="json")}
 
 
 # ── Dispute Recovery & Partial Refund API (Step 4) ────────────
@@ -1545,7 +1558,7 @@ async def receive_webhook(request: Request, db: Session = Depends(get_session)):
 
 
 # ── Static Files & Dashboard Mount ─────────────────────────────
-_static_dir = Path("./static")
+_static_dir = Path(__file__).resolve().parents[2] / "static"
 _static_dir.mkdir(exist_ok=True)
 app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
 

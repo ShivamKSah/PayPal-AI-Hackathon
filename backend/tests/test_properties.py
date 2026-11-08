@@ -33,7 +33,7 @@ def setup_db():
 # ── Property 1: spent + reserved never exceeds budget ─────────────────
 
 @seed(42)
-@settings(max_examples=50, deadline=None)
+@settings(max_examples=100, deadline=None, derandomize=True)
 @given(
     budget_cents=st.integers(min_value=5000, max_value=200000),
     purchase_attempts=st.lists(st.integers(min_value=500, max_value=50000), min_size=1, max_size=8),
@@ -92,7 +92,7 @@ def test_spent_plus_reserved_never_exceeds_budget_property(budget_cents, purchas
 # ── Property 2: A DENY verdict never calls PayPal ─────────────────────
 
 @seed(42)
-@settings(max_examples=30, deadline=None)
+@settings(max_examples=100, deadline=None, derandomize=True)
 @given(
     over_budget_delta=st.integers(min_value=1, max_value=50000),
 )
@@ -143,7 +143,7 @@ def test_deny_verdict_never_calls_paypal_property(over_budget_delta):
 # ── Property 3: Refund never exceeds capture amount ───────────────────
 
 @seed(42)
-@settings(max_examples=30, deadline=None)
+@settings(max_examples=100, deadline=None, derandomize=True)
 @given(
     capture_cents=st.integers(min_value=5000, max_value=50000),
     refund_pct=st.integers(min_value=1, max_value=150),

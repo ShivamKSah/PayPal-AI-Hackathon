@@ -99,6 +99,22 @@ async function updateSummaryMetrics(items) {
   const approvedCount = items.filter(i => i.verdict === "APPROVE").length;
   document.getElementById("metricApproved").textContent = approvedCount;
 
+  // Poll active mandate for budget tracking
+  try {
+    const mRes = await fetch(`/mandates/active?session_id=${SESSION_ID}`);
+    if (mRes.ok) {
+      const m = await mRes.json();
+      if (m) {
+        activeMandateId = m.id;
+        const spent = ((m.spent_cents || 0) + (m.reserved_cents || 0)) / 100;
+        const budget = (m.budget_cents || 0) / 100;
+        const remaining = Math.max(0, budget - spent);
+        document.getElementById("metricBudget").textContent = `$${spent.toFixed(2)} / $${budget.toFixed(2)}`;
+        document.getElementById("metricRemaining").textContent = `$${remaining.toFixed(2)} available`;
+      }
+    }
+  } catch (err) {}
+
   // Poll challenge stats
   try {
     const statsRes = await fetch(`/challenge/stats?session_id=${SESSION_ID}`);
@@ -499,7 +515,32 @@ function escapeHtml(str) {
     .replace(/'/g, "&#039;");
 }
 
-// ── Start 2-Second Polling ──────────────────────────────────────────
+// ── 8. Load Evaluation Benchmark Results ─────────────────────────────
+
+async function loadEvalResults() {
+  try {
+    const res = await fetch("/static/eval_results.json");
+    if (res.ok) {
+      const data = await res.json();
+      const metrics = data.metrics || {};
+      const latency = data.latency_ms || {};
+      if (metrics.block_rate_pct !== undefined) {
+        document.getElementById("evalBlockRate").textContent = `${metrics.block_rate_pct.toFixed(1)}%`;
+      }
+      if (metrics.false_positive_rate_pct !== undefined) {
+        document.getElementById("evalFpRate").textContent = `${metrics.false_positive_rate_pct.toFixed(1)}%`;
+      }
+      if (latency.p50 !== undefined) {
+        document.getElementById("evalLatency").textContent = `${latency.p50.toFixed(3)}ms`;
+      }
+    }
+  } catch (err) {
+    console.warn("Could not load eval_results.json:", err);
+  }
+}
+
+// ── Start Dashboard & Polling ───────────────────────────────────────
+loadEvalResults();
 pollLedger();
 setInterval(pollLedger, 2000);
 
