@@ -102,3 +102,22 @@ def test_mandate_lifecycle_and_proposal_submission():
     assert check_1_hit["passed"] is False
     assert check_1_hit["verdict_on_fail"] == "DENY"
 
+
+def test_outbound_connect_to_non_loopback_is_blocked_guard():
+    """
+    [GUARD] Proves an outbound connect to a non-loopback address (e.g. 8.8.8.8:443)
+    raises a socket-blocked error immediately and does not hang.
+    """
+    import socket
+    from pytest_socket import SocketConnectBlockedError
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        with pytest.raises((SocketConnectBlockedError, RuntimeError)):
+            s.connect(("8.8.8.8", 443))
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+

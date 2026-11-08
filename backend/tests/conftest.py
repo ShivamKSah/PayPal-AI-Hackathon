@@ -3,13 +3,12 @@
 Enforces:
 1. No unmocked live network calls to LLMs or PayPal.
 2. time.sleep is monkeypatched to zero wait time so retries run instantly.
-3. Outbound network calls fail loudly (SocketBlockedError), while loopback / in-process TestClient / respx work.
+3. Outbound network connections to non-loopback addresses fail immediately (allow only 127.0.0.1 and ::1).
 """
 
-import socket
 import time
 import pytest
-from pytest_socket import SocketBlockedError
+import pytest_socket
 from backend.app import config
 
 
@@ -20,7 +19,7 @@ def enforce_test_isolation(monkeypatch):
     - Sets LLM_API_KEY to empty string and LLM_BASE_URL to dummy value.
     - Patches config, environment, and module-level variables.
     - Patches time.sleep so backoff never waits.
-    - Blocks real outbound network calls (SocketBlockedError).
+    - Allows only loopback connections (127.0.0.1, ::1); any outbound connect fails immediately.
     """
     # 1. Environment variables
     monkeypatch.setenv("LLM_API_KEY", "")
@@ -54,21 +53,9 @@ def enforce_test_isolation(monkeypatch):
     # 4. Instant sleep for fast retries
     monkeypatch.setattr(time, "sleep", lambda *args, **kwargs: None)
 
-    # 5. Outbound network guard: block external hosts, permit loopback & in-process
-    orig_getaddrinfo = socket.getaddrinfo
-    orig_connect = socket.socket.connect
+    # 5. Outbound network guard: allow ONLY loopback connections
+    pytest_socket.socket_allow_hosts(["127.0.0.1", "::1"], allow_unix_socket=True)
 
-    def guarded_getaddrinfo(host, port, *args, **kwargs):
-        if host in ("127.0.0.1", "localhost", "::1", None, ""):
-            return orig_getaddrinfo(host, port, *args, **kwargs)
-        raise SocketBlockedError(f"A test attempted an outbound network call to host: {host}")
+    yield
 
-    def guarded_connect(sock, address):
-        if isinstance(address, tuple) and len(address) >= 1:
-            host = address[0]
-            if host in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
-                return orig_connect(sock, address)
-        raise SocketBlockedError(f"A test attempted an outbound connection to: {address}")
-
-    monkeypatch.setattr(socket, "getaddrinfo", guarded_getaddrinfo)
-    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    pytest_socket._remove_restrictions()
