@@ -4,6 +4,7 @@
 !.env.example
 
 # Database
+mandate.db
 *.db
 *.db-journal
 *.sqlite
@@ -18,11 +19,17 @@ dist/
 build/
 *.egg
 .pytest_cache/
+.hypothesis/
 .mypy_cache/
 .ruff_cache/
 htmlcov/
 .coverage
 .coverage.*
+
+# Temporary files & folders
+tmp/
+temp/
+*.tmp
 
 # Virtual environments
 venv/

@@ -1,0 +1,42 @@
+{
+  "benchmark_date": "2026-11-08T18:45:27.303184+00:00",
+  "sample_size": {
+    "total_evaluations": 100,
+    "attack_scenarios": 50,
+    "legitimate_purchases": 50,
+    "note": "Evaluation performed on recorded synthetic dataset (N=100) using deterministic policy engine. Real-world distribution will vary based on merchant and catalog variance."
+  },
+  "metrics": {
+    "block_rate_pct": 100.0,
+    "block_rate_95ci": [
+      92.86,
+      100.0
+    ],
+    "false_positive_rate_pct": 0.0,
+    "false_positive_rate_95ci": [
+      0.0,
+      7.14
+    ],
+    "escalate_on_legitimate_pct": 20.0,
+    "escalate_on_legitimate_95ci": [
+      11.24,
+      33.04
+    ],
+    "approved_legitimate_count": 40,
+    "escalated_legitimate_count": 10,
+    "attacks_blocked_count": 50,
+    "attacks_breached_count": 0
+  },
+  "latency_ms": {
+    "p50": 0.031,
+    "p95": 0.053,
+    "mean": 0.037,
+    "unit": "milliseconds"
+  },
+  "safety_invariants_verified": [
+    "Spent + reserved never exceeds mandate budget",
+    "DENY verdict never produces outbound PayPal calls",
+    "Refund amount never exceeds capture amount",
+    "Tampered cart hash binding refuses execution before gateway"
+  ]
+}

@@ -14,4 +14,5 @@ class ChallengeAttempt(SQLModel, table=True):
     attack_type: str
     verdict: str  # DENY, APPROVE, ESCALATE
     rule_hits: Optional[List[Dict[str, Any]]] = Field(default=None, sa_type=JSON)
+    breached: bool = Field(default=False)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -89,3 +89,7 @@ class MockCatalogAdapter:
             p for p in self._products.values()
             if q in p.title.lower() or q in p.category.lower() or q in p.id.lower()
         ]
+
+    def search_products(self, query: str) -> List[Product]:
+        """Alias for search."""
+        return self.search(query)

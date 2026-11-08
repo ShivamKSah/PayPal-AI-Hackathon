@@ -8,12 +8,19 @@ The LLM output may ONLY push toward ESCALATE.
 import re
 import json
 import logging
+import httpx
+import sys
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
-from backend.app.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+from backend.app import config
+from backend.app.llm import call_llm_with_retry
 
 logger = logging.getLogger("mandate.policy.constraints")
+
+LLM_API_KEY = config.LLM_API_KEY
+LLM_BASE_URL = config.LLM_BASE_URL
+LLM_MODEL = config.LLM_MODEL
 
 
 class ExtractedConstraint(BaseModel):
@@ -27,24 +34,29 @@ class ConstraintExtractionResult(BaseModel):
     constraints: List[ExtractedConstraint] = Field(default_factory=list)
     extraction_method: str = "regex_fallback"
     model_reported: Optional[str] = None
+    llm_fallback: bool = False
+    attempts: int = 0
 
 
 def extract_constraints(instruction_text: str) -> ConstraintExtractionResult:
     """
     Extract structured dimension / attribute constraints from natural language instruction.
-    Uses OpenRouter OpenAI-compatible API if LLM_API_KEY is configured,
+    Uses OpenAI-compatible API if LLM_API_KEY is configured,
     else falls back to deterministic regex extraction.
     """
-    if LLM_API_KEY:
+    curr_key = getattr(sys.modules[__name__], "LLM_API_KEY", None) or config.LLM_API_KEY
+    if curr_key:
         try:
             return _extract_via_openrouter(instruction_text)
         except Exception as exc:
-            logger.warning(f"OpenRouter LLM extraction failed: {exc}. Falling back to rule-based parser.")
+            attempts = getattr(exc, "attempts", 0)
+            logger.warning(f"LLM extraction request exception: {exc}. Falling back to rule-based parser.")
+            return _extract_via_rules(instruction_text, llm_fallback=True, attempts=attempts)
 
-    return _extract_via_rules(instruction_text)
+    return _extract_via_rules(instruction_text, llm_fallback=False, attempts=0)
 
 
-def _extract_via_rules(text: str) -> ConstraintExtractionResult:
+def _extract_via_rules(text: str, llm_fallback: bool = False, attempts: int = 0) -> ConstraintExtractionResult:
     """Deterministic rule-based constraint parser."""
     constraints: List[ExtractedConstraint] = []
     lower = text.lower()
@@ -86,6 +98,30 @@ def _extract_via_rules(text: str) -> ConstraintExtractionResult:
                     raw_mention=m.group(0),
                 )
             )
+    elif re.search(r'\b(?:standing\s+)?desk\s+(\d{2,3})\s*(?:cm)?\b', lower):
+        # e.g., "standing desk 160 cm"
+        m = re.search(r'\b(?:standing\s+)?desk\s+(\d{2,3})\s*(?:cm)?\b', lower)
+        if m:
+            constraints.append(
+                ExtractedConstraint(
+                    field="width",
+                    target_value=int(m.group(1)),
+                    unit="cm",
+                    raw_mention=m.group(0),
+                )
+            )
+    elif re.search(r'\b(\d{2,3})\s*cm\b', lower):
+        # e.g. "160 cm"
+        m = re.search(r'\b(\d{2,3})\s*cm\b', lower)
+        if m:
+            constraints.append(
+                ExtractedConstraint(
+                    field="width",
+                    target_value=int(m.group(1)),
+                    unit="cm",
+                    raw_mention=m.group(0),
+                )
+            )
 
     # Pattern for height
     if "height" in lower or "tall" in lower:
@@ -113,16 +149,20 @@ def _extract_via_rules(text: str) -> ConstraintExtractionResult:
             )
             break
 
-    return ConstraintExtractionResult(constraints=constraints, extraction_method="regex_fallback")
+    return ConstraintExtractionResult(
+        constraints=constraints,
+        extraction_method="regex_fallback",
+        llm_fallback=llm_fallback,
+        attempts=attempts,
+    )
 
 
 def _extract_via_openrouter(text: str) -> ConstraintExtractionResult:
     """
     Call OpenRouter's OpenAI-compatible API for structured constraint extraction
-    using strict JSON-schema structured output. Logs the model name each response reports.
+    using strict JSON-schema structured output, automatic retries, and fast-model fallback.
+    Logs the model name each response reports.
     """
-    import httpx
-
     json_schema = {
         "name": "extracted_constraints",
         "strict": True,
@@ -161,63 +201,54 @@ def _extract_via_openrouter(text: str) -> ConstraintExtractionResult:
         },
     }
 
-    payload = {
-        "model": LLM_MODEL,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are a strict constraint extraction parser. "
-                    "Extract physical or technical constraints requested in the buyer instruction "
-                    "(e.g., width, height, depth, color, material, capacity, connectivity). "
-                    "Return ONLY valid JSON conforming to the requested schema."
-                ),
+    def payload_builder(model: str) -> Dict[str, Any]:
+        return {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a strict constraint extraction parser. "
+                        "Extract physical or technical constraints requested in the buyer instruction "
+                        "(e.g., width, height, depth, color, material, capacity, connectivity). "
+                        "Return ONLY valid JSON conforming to the requested schema."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": text,
+                },
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": json_schema,
             },
-            {
-                "role": "user",
-                "content": text,
-            },
-        ],
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": json_schema,
-        },
-    }
+        }
 
-    headers = {
-        "Authorization": f"Bearer {LLM_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/mandate",
-        "X-Title": "Mandate Policy Engine",
-    }
-
-    url = f"{LLM_BASE_URL.rstrip('/')}/chat/completions"
-
-    with httpx.Client(timeout=15.0) as client:
-        resp = client.post(url, headers=headers, json=payload)
-        if resp.status_code == 200:
-            res_data = resp.json()
-            reported_model = res_data.get("model") or LLM_MODEL
-            logger.info(f"OpenRouter constraint extraction response received from model: {reported_model}")
-
-            choices = res_data.get("choices", [])
-            if choices:
-                raw_content = choices[0].get("message", {}).get("content", "{}")
-                parsed = json.loads(raw_content)
-                constraints = [
-                    ExtractedConstraint(**c) for c in parsed.get("constraints", [])
-                ]
-                return ConstraintExtractionResult(
-                    constraints=constraints,
-                    extraction_method="llm_openrouter",
-                    model_reported=reported_model,
-                )
-
+    try:
+        res_data, reported_model, attempts = call_llm_with_retry(payload_builder)
+        choices = res_data.get("choices", [])
+        if choices:
+            raw_content = choices[0].get("message", {}).get("content", "{}")
+            parsed = json.loads(raw_content)
+            constraints = [
+                ExtractedConstraint(**c) for c in parsed.get("constraints", [])
+            ]
+            logger.info(f"OpenRouter constraint extraction response from {reported_model} in {attempts} attempt(s)")
+            return ConstraintExtractionResult(
+                constraints=constraints,
+                extraction_method="llm_openrouter",
+                model_reported=reported_model,
+                llm_fallback=False,
+                attempts=attempts,
+            )
+        raise RuntimeError("No choices returned in LLM response")
+    except Exception as exc:
+        attempts = getattr(exc, "attempts", 0)
         logger.warning(
-            f"OpenRouter returned status {resp.status_code}: {resp.text[:200]}. Falling back to rules."
+            f"LLM extraction failed after retry/fallback: {exc}. Falling back to rules."
         )
-
-    return _extract_via_rules(text)
+        return _extract_via_rules(text, llm_fallback=True, attempts=attempts)
 
 
 def _extract_via_llm(text: str) -> ConstraintExtractionResult:

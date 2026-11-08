@@ -9,6 +9,7 @@ def check_9_ambiguity_gate(
     catalog_specs: Dict[str, Any],
     extraction_method: str = "regex_fallback",
     model_reported: Optional[str] = None,
+    llm_fallback: bool = False,
 ) -> Dict[str, Any]:
     """
     Check 9:
@@ -26,6 +27,7 @@ def check_9_ambiguity_gate(
             "verdict_on_fail": "ESCALATE",
             "extraction_method": extraction_method,
             "model_reported": model_reported,
+            "llm_fallback": llm_fallback,
         }
 
     all_present, missing_fields = compare_constraints(constraints, catalog_specs)
@@ -42,6 +44,7 @@ def check_9_ambiguity_gate(
             "verdict_on_fail": "ESCALATE",
             "extraction_method": extraction_method,
             "model_reported": model_reported,
+            "llm_fallback": llm_fallback,
         }
 
     return {
@@ -52,5 +55,6 @@ def check_9_ambiguity_gate(
         "verdict_on_fail": "ESCALATE",
         "extraction_method": extraction_method,
         "model_reported": model_reported,
+        "llm_fallback": llm_fallback,
     }
 

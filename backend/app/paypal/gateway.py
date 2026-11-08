@@ -60,6 +60,11 @@ class PaymentGateway(ABC):
         pass
 
     @abstractmethod
+    def get_order(self, order_id: str) -> Dict[str, Any]:
+        """Retrieve order details from PayPal."""
+        pass
+
+    @abstractmethod
     def verify_webhook(self, headers: Dict[str, str], body: Dict[str, Any]) -> bool:
         """Verify webhook signature."""
         pass
@@ -293,8 +298,7 @@ class VaultGateway(PaymentGateway):
         """Execute refund against a captured PayPal payment."""
         token = get_access_token()
         amount_str = cents_to_paypal_str(amount_cents)
-        masked_tok = mask_token(vault_token)
-        logger.info(f"Charging via vault_id={masked_tok}, amount={amount_cents}¢, request_id={request_id}")
+        logger.info(f"Refunding capture_id={capture_id}, amount={amount_cents}¢, request_id={request_id}")
 
         body = {
             "amount": {"currency_code": "USD", "value": amount_str},
@@ -319,6 +323,20 @@ class VaultGateway(PaymentGateway):
                 "status": data.get("status"),
                 "raw": data,
             }
+
+    def get_order(self, order_id: str) -> Dict[str, Any]:
+        """Retrieve order details by PayPal order ID."""
+        token = get_access_token()
+        with httpx.Client(timeout=20.0) as client:
+            resp = client.get(
+                f"{self.base_url}/v2/checkout/orders/{order_id}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()
 
     def verify_webhook(self, headers: Dict[str, str], body: Dict[str, Any]) -> bool:
         """
@@ -425,8 +443,7 @@ class BuyerApprovalGateway(PaymentGateway):
     ) -> Dict[str, Any]:
         token = get_access_token()
         amount_str = cents_to_paypal_str(amount_cents)
-        masked_tok = mask_token(vault_token)
-        logger.info(f"Charging via vault_id={masked_tok}, amount={amount_cents}¢, request_id={request_id}")
+        logger.info(f"Refunding capture_id={capture_id}, amount={amount_cents}¢, request_id={request_id}")
 
         body = {
             "amount": {"currency_code": "USD", "value": amount_str},
@@ -446,6 +463,19 @@ class BuyerApprovalGateway(PaymentGateway):
             resp.raise_for_status()
             data = resp.json()
             return {"refund_id": data.get("id"), "status": data.get("status")}
+
+    def get_order(self, order_id: str) -> Dict[str, Any]:
+        token = get_access_token()
+        with httpx.Client(timeout=20.0) as client:
+            resp = client.get(
+                f"{self.base_url}/v2/checkout/orders/{order_id}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()
 
     def verify_webhook(self, headers: Dict[str, str], body: Dict[str, Any]) -> bool:
         return False

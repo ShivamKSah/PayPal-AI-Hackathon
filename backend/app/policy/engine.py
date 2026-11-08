@@ -33,6 +33,9 @@ class PolicyEvaluationResult(BaseModel):
     cart_hash: str
     catalog_snapshot: Optional[Dict[str, Any]] = None
     constraints: Optional[Dict[str, Any]] = None
+    llm_fallback: bool = False
+    model_used: Optional[str] = None
+    llm_attempts: int = 0
 
 
 def compute_cart_hash(cart: Dict[str, Any]) -> str:
@@ -113,13 +116,14 @@ class PolicyEngine:
             logging.getLogger("mandate.policy.engine").warning(
                 f"Constraint extraction failed: {exc}. Treating as no constraints (ESCALATE)."
             )
-            extraction_res = ConstraintExtractionResult(constraints=[])
+            extraction_res = ConstraintExtractionResult(constraints=[], llm_fallback=True)
         catalog_specs = primary_product.specs if primary_product else {}
         hit_9 = check_9_ambiguity_gate(
             extraction_res.constraints,
             catalog_specs,
             extraction_method=extraction_res.extraction_method,
             model_reported=getattr(extraction_res, "model_reported", None),
+            llm_fallback=getattr(extraction_res, "llm_fallback", False),
         )
         rule_hits.append(hit_9)
 
@@ -176,4 +180,7 @@ class PolicyEngine:
             cart_hash=cart_hash,
             catalog_snapshot=catalog_snapshot,
             constraints=extraction_res.model_dump(),
+            llm_fallback=getattr(extraction_res, "llm_fallback", False),
+            model_used=getattr(extraction_res, "model_reported", None),
+            llm_attempts=getattr(extraction_res, "attempts", 0),
         )

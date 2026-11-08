@@ -16,21 +16,30 @@ services:
         sync: false
       - key: PAYPAL_ENV
         value: sandbox
-      - key: LLM_API_KEY
-        sync: false
-      - key: CATALOG_API_KEY
-        sync: false
-      - key: DATABASE_URL
-        fromDatabase:
-          name: mandate-db
-          property: connectionString
       - key: TOKEN_ENCRYPTION_KEY
         sync: false
       - key: SESSION_SECRET
         sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_BASE_URL
+        value: https://generativelanguage.googleapis.com/v1beta/openai
+      - key: LLM_MODEL
+        value: gemini-2.5-flash
+      - key: LLM_MODEL_FAST
+        value: gemini-2.5-flash
+      - key: CATALOG_API_KEY
+        sync: false
       - key: DAILY_LLM_BUDGET
         value: "5.00"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mandate-db
+          property: connectionString
 
 databases:
   - name: mandate-db
+    # TODO: Render's free tier database expires automatically after 30 days.
+    # Choose a paid plan (e.g., starter or standard) in the Render Dashboard
+    # to prevent database deletion.
     plan: free

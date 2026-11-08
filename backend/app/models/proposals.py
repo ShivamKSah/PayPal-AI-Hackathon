@@ -17,6 +17,9 @@ class ProposalBase(SQLModel):
     verdict: str  # APPROVE, ESCALATE, DENY
     rule_hits: List[Dict[str, Any]] = Field(default_factory=list, sa_type=JSON)
     reviewer: Optional[str] = None
+    llm_fallback: bool = Field(default=False)
+    model_used: Optional[str] = None
+    llm_attempts: int = Field(default=0)
 
 
 class Proposal(ProposalBase, table=True):
@@ -34,6 +37,9 @@ class ProposalCreate(SQLModel):
     instruction_text: str
     cart_json: Dict[str, Any]
     agent_reasoning: Optional[str] = None
+    llm_fallback: bool = False
+    model_used: Optional[str] = None
+    llm_attempts: int = 0
 
 
 class ProposalRead(ProposalBase):

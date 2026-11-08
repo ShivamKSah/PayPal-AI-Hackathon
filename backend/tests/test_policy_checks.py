@@ -288,7 +288,7 @@ def test_check_9_missing_width_escalates():
 
 def test_check_9_with_recorded_openrouter_llm_response(monkeypatch):
     """Verify constraint extraction parses a recorded OpenRouter response using JSON-schema structured output."""
-    from unittest.mock import MagicMock
+    from unittest.mock import MagicMock, patch
     import json
     import httpx
     from backend.app.policy import constraints as constraints_module
@@ -322,47 +322,65 @@ def test_check_9_with_recorded_openrouter_llm_response(monkeypatch):
     monkeypatch.setattr(constraints_module, "LLM_API_KEY", "sk-or-v1-testkey123")
     monkeypatch.setattr(constraints_module, "LLM_BASE_URL", "https://openrouter.ai/api/v1")
     monkeypatch.setattr(constraints_module, "LLM_MODEL", "google/gemini-2.5-flash")
-    monkeypatch.setattr(httpx.Client, "post", lambda self, *args, **kwargs: mock_resp)
 
-    res = constraints_module.extract_constraints("buy a 160 cm wide standing desk")
-    assert res.extraction_method == "llm_openrouter"
-    assert res.model_reported == "google/gemini-2.5-flash"
-    assert len(res.constraints) == 1
-    assert res.constraints[0].field == "width"
-    assert res.constraints[0].target_value == 160
+    with patch("backend.app.policy.constraints.httpx.Client") as mock_client_cls:
+        mock_instance = MagicMock()
+        mock_instance.__enter__.return_value = mock_instance
+        mock_instance.post.return_value = mock_resp
+        mock_client_cls.return_value = mock_instance
 
-    gate_result = check_9_ambiguity_gate(
-        res.constraints,
-        {"height": 75},
-        extraction_method=res.extraction_method,
-        model_reported=res.model_reported,
-    )
-    assert gate_result["passed"] is False
-    assert gate_result["verdict_on_fail"] == "ESCALATE"
-    assert gate_result["extraction_method"] == "llm_openrouter"
-    assert gate_result["model_reported"] == "google/gemini-2.5-flash"
+        res = constraints_module.extract_constraints("buy a 160 cm wide standing desk")
+        assert res.extraction_method == "llm_openrouter"
+        assert res.model_reported == "google/gemini-2.5-flash"
+        assert len(res.constraints) == 1
+        assert res.constraints[0].field == "width"
+        assert res.constraints[0].target_value == 160
+
+        gate_result = check_9_ambiguity_gate(
+            res.constraints,
+            {"height": 75},
+            extraction_method=res.extraction_method,
+            model_reported=res.model_reported,
+        )
+        assert gate_result["passed"] is False
+        assert gate_result["verdict_on_fail"] == "ESCALATE"
+        assert gate_result["extraction_method"] == "llm_openrouter"
+        assert gate_result["model_reported"] == "google/gemini-2.5-flash"
 
 
 def test_check_9_fallback_to_regex_on_error(monkeypatch):
-    """Verify check 9 falls back to regex parser when OpenRouter call fails."""
+    """[MOCKED] Verify check 9 falls back to regex parser when LLM call fails, setting llm_fallback=True."""
     import httpx
     from backend.app.policy import constraints as constraints_module
-    from unittest.mock import MagicMock
+    from unittest.mock import MagicMock, patch
 
     mock_resp = MagicMock()
     mock_resp.status_code = 500
+    mock_resp.reason_phrase = "Internal Server Error"
     mock_resp.text = "Internal error"
 
-    monkeypatch.setattr(constraints_module, "LLM_API_KEY", "sk-or-v1-testkey123")
-    monkeypatch.setattr(httpx.Client, "post", lambda self, *args, **kwargs: mock_resp)
+    monkeypatch.setattr(constraints_module, "LLM_API_KEY", "sk-testkey123")
 
-    res = constraints_module.extract_constraints("buy a 160 cm wide desk")
-    assert res.extraction_method == "regex_fallback"
-    assert any(c.field == "width" for c in res.constraints)
+    with patch("backend.app.policy.constraints.httpx.Client") as mock_client_cls:
+        mock_instance = MagicMock()
+        mock_instance.__enter__.return_value = mock_instance
+        mock_instance.post.return_value = mock_resp
+        mock_client_cls.return_value = mock_instance
 
-    gate_result = check_9_ambiguity_gate(res.constraints, {"width": 160}, extraction_method=res.extraction_method)
-    assert gate_result["passed"] is True
-    assert gate_result["extraction_method"] == "regex_fallback"
+        res = constraints_module.extract_constraints("buy a 160 cm wide desk")
+        assert res.extraction_method == "regex_fallback"
+        assert res.llm_fallback is True
+        assert any(c.field == "width" for c in res.constraints)
+
+        gate_result = check_9_ambiguity_gate(
+            res.constraints,
+            {"width": 160},
+            extraction_method=res.extraction_method,
+            llm_fallback=res.llm_fallback,
+        )
+        assert gate_result["passed"] is True
+        assert gate_result["extraction_method"] == "regex_fallback"
+        assert gate_result["llm_fallback"] is True
 
 
 # ── Check 10: Recurring Billing ───────────────────────────────

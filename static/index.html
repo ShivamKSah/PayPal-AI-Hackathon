@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mandate — AI Shopping Agent Policy Engine & Payment Gateway</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-brand">
+      <div class="logo-shield">🛡️</div>
+      <div>
+        <h1>MANDATE</h1>
+        <p class="tagline">Deterministic Policy Engine & Autonomous Payment Gateway for AI Agents</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <span class="session-badge">Session: <strong id="sessionDisplay">session-demo</strong></span>
+      <button id="btnReset" class="btn btn-danger">↺ Reset System</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Top Summary Metrics Tiles -->
+    <section class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-label">Budget Used / Cap</div>
+        <div class="metric-value" id="metricBudget">$0.00 / $500.00</div>
+        <div class="metric-sub" id="metricRemaining">$500.00 available</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Approved Purchases</div>
+        <div class="metric-value" id="metricApproved">0</div>
+        <div class="metric-sub">Vaulted 1-click execution</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Open Dispute Cases</div>
+        <div class="metric-value" id="metricCases">0</div>
+        <div class="metric-sub">Recovery & partial refunds</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">Break-the-Mandate</div>
+        <div class="metric-value"><span id="metricAttempts">0</span> / <span class="text-success">0 Breaches</span></div>
+        <div class="metric-sub">15 Attack vectors blocked</div>
+      </div>
+      <div class="metric-card eval-card">
+        <div class="metric-label">
+          Policy Evaluation Engine <span class="badge-synthetic">SYNTHETIC (N=100)</span>
+        </div>
+        <div class="metric-sub-stats">
+          <span>Block Rate: <strong class="text-success" id="evalBlockRate">100.0%</strong></span>
+          <span>FP Rate: <strong class="text-success" id="evalFpRate">0.0%</strong></span>
+          <span>p50 Latency: <strong id="evalLatency">0.8ms</strong></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Operational Workflow: Grant & Agent Execution -->
+    <div class="grid-two-col">
+      <!-- Grant Setup Box -->
+      <section class="card">
+        <h2>1. Session Mandate & PayPal Vault Grant</h2>
+        <p class="section-desc">Create the spending boundaries and authorize one-time $1.00 vault setup in PayPal Sandbox.</p>
+        
+        <form id="formMandate" class="form-grid">
+          <div class="form-group">
+            <label>Budget (USD)</label>
+            <input type="number" id="inputBudget" value="500" min="10" max="5000">
+          </div>
+          <div class="form-group">
+            <label>Per-Txn Cap (USD)</label>
+            <input type="number" id="inputCap" value="200" min="5" max="1000">
+          </div>
+          <div class="form-group full-width">
+            <label>Merchant Allowlist</label>
+            <input type="text" id="inputMerchants" value="MERCHANT-TECH-STORE, MERCHANT-OFFICE-SUPPLY">
+          </div>
+          <div class="form-group full-width">
+            <label>Approved Categories</label>
+            <input type="text" id="inputCategories" value="office_furniture, electronics">
+          </div>
+          <button type="submit" class="btn btn-primary full-width">Create Mandate & Init Grant</button>
+        </form>
+
+        <div id="grantFlowBox" class="grant-flow-box hidden">
+          <div class="grant-step">
+            <span class="step-num">Step A</span>
+            <span id="grantOrderInfo">PayPal setup order created.</span>
+            <a id="grantLink" href="#" target="_blank" class="btn btn-paypal">Approve on PayPal Sandbox ↗</a>
+          </div>
+          <div class="grant-step">
+            <span class="step-num">Step B</span>
+            <span>Once approved in PayPal popup:</span>
+            <button id="btnGrantComplete" class="btn btn-success">I Approved (Vault Token Return)</button>
+          </div>
+          <div id="grantResultMsg" class="grant-status-msg"></div>
+        </div>
+      </section>
+
+      <!-- Shopping Agent Execution Box -->
+      <section class="card">
+        <h2>2. Run AI Shopping Agent</h2>
+        <p class="section-desc">Autonomous agent reasons over buyer instructions under strict tool guard. Zero LLM in the payment path.</p>
+
+        <div class="agent-box">
+          <div class="form-group">
+            <label>Buyer Instruction</label>
+            <input type="text" id="inputInstruction" placeholder="e.g., buy an ergonomic vertical mouse" value="buy an ergonomic vertical mouse">
+          </div>
+          <div class="quick-prompts">
+            <span class="prompt-chip" data-prompt="buy an ergonomic vertical mouse">Ergonomic Mouse ($45)</span>
+            <span class="prompt-chip" data-prompt="buy a 160 cm standing desk">Standing Desk 160cm ($250)</span>
+            <span class="prompt-chip" data-prompt="buy minimalist desk with no width specs">Ambiguous Desk (Triggers ESCALATE)</span>
+          </div>
+          <button id="btnRunAgent" class="btn btn-accent full-width">🤖 Run Shopping Agent</button>
+
+          <div id="agentStatusBox" class="agent-result-box hidden">
+            <div id="llmFallbackNotice" class="badge-fallback hidden">⚠️ LLM Fallback: Deterministic rules used</div>
+            <div class="verdict-banner" id="agentVerdictBanner">
+              <span id="agentVerdictIcon">⏳</span>
+              <span id="agentVerdictText">EVALUATING</span>
+            </div>
+            <div id="agentDetails" class="agent-details-text"></div>
+            
+            <div id="escalateActions" class="escalate-actions hidden">
+              <p>Ambiguity Gate held. Human decision required:</p>
+              <button id="btnHumanApprove" class="btn btn-success">✓ Approve & Charge</button>
+              <button id="btnHumanReject" class="btn btn-danger">✕ Reject Proposal</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Attack Simulator -->
+    <section class="card">
+      <div class="card-header-flex">
+        <div>
+          <h2>3. Break-the-Mandate Attack Simulator</h2>
+          <p class="section-desc">Fire simulated adversarial attacks to prove policy engine safety invariants. PayPal is NEVER called for non-approved transactions.</p>
+        </div>
+        <button id="btnRunAllAttacks" class="btn btn-outline">⚡ Run All 15 Attacks</button>
+      </div>
+
+      <div class="attacks-grid">
+        <button class="attack-btn" data-attack="over_budget">1. Over Budget (Check 2)</button>
+        <button class="attack-btn" data-attack="over_cap">2. Over Cap (Check 3)</button>
+        <button class="attack-btn" data-attack="off_list_merchant">3. Rogue Merchant (Check 4)</button>
+        <button class="attack-btn" data-attack="lookalike_merchant">4. Lookalike Vendor (Check 4)</button>
+        <button class="attack-btn" data-attack="mislabeled_category">5. Gift Cards (Check 5)</button>
+        <button class="attack-btn" data-attack="inflated_price">6. Inflated Price (Check 6)</button>
+        <button class="attack-btn" data-attack="hidden_line_item">7. Hidden Fee Item (Check 6)</button>
+        <button class="attack-btn" data-attack="quantity_inflation">8. Math Inflation (Check 6)</button>
+        <button class="attack-btn" data-attack="currency_swap">9. Currency Swap (Check 6)</button>
+        <button class="attack-btn" data-attack="expired_mandate">10. Expired Mandate (Check 1)</button>
+        <button class="attack-btn" data-attack="revoked_mandate">11. Revoked Mandate (Check 1)</button>
+        <button class="attack-btn" data-attack="velocity_burst">12. Velocity Spam (Check 7)</button>
+        <button class="attack-btn" data-attack="duplicate_replay">13. Duplicate Replay (Check 8)</button>
+        <button class="attack-btn" data-attack="subscription_upsell">14. Hidden Subscription (Check 10)</button>
+        <button class="attack-btn" data-attack="cart_swap_after_approval">15. Post-Approval Cart Swap</button>
+      </div>
+
+      <div id="attackResultBox" class="attack-status-banner hidden">
+        <span id="attackResultIcon">🛡️</span>
+        <span id="attackResultText">Attack blocked.</span>
+      </div>
+    </section>
+
+    <!-- Real-Time Ledger Table -->
+    <section class="card">
+      <div class="card-header-flex">
+        <div>
+          <h2>4. Transaction Ledger</h2>
+          <p class="section-desc">Polled live every 2 seconds. Click any row to inspect all 11 checks in the detail panel.</p>
+        </div>
+        <div class="ledger-meta">
+          <span class="live-indicator"><span class="dot"></span> Polling GET /ledger</span>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="ledger-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Proposed Item</th>
+              <th>Merchant</th>
+              <th>Amount</th>
+              <th>Verdict</th>
+              <th>Payment State</th>
+              <th>Rule Enforcement</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="ledgerTableBody">
+            <tr>
+              <td colspan="8" class="text-center">Loading ledger...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Row Detail Inspector Panel -->
+    <section id="detailPanel" class="card hidden">
+      <div class="card-header-flex">
+        <h2>Proposal & Policy Verification Inspector</h2>
+        <button id="btnCloseDetail" class="btn btn-sm">Close ✕</button>
+      </div>
+      <div class="detail-content">
+        <div class="detail-summary-grid">
+          <div><strong>Proposal ID:</strong> <span id="detailId">-</span></div>
+          <div><strong>Instruction:</strong> <span id="detailInstruction">-</span></div>
+          <div><strong>Agent Reasoning:</strong> <span id="detailReasoning">-</span></div>
+          <div><strong>Cart Hash:</strong> <code id="detailCartHash">-</code></div>
+        </div>
+
+        <h3>All 11 Policy Engine Checks (Section 7 Order)</h3>
+        <table class="checks-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Check Name</th>
+              <th>Result</th>
+              <th>Verdict If Failed</th>
+              <th>Evaluation Rationale</th>
+            </tr>
+          </thead>
+          <tbody id="detailChecksBody"></tbody>
+        </table>
+
+        <h3>Canonical Cart JSON</h3>
+        <pre id="detailRawJson" class="code-block"></pre>
+      </div>
+    </section>
+  </main>
+
+  <!-- Dispute / Recovery Modal -->
+  <div id="disputeModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Dispute Recovery: "This is wrong"</h3>
+        <button id="btnCloseModal" class="btn btn-sm">✕</button>
+      </div>
+      <div class="modal-body">
+        <p>Open a structured dispute against payment <code id="modalPaymentId">-</code>. Root cause will be diagnosed and refunded according to authorized economics bounds.</p>
+        <div class="form-group">
+          <label>Buyer Claim Description</label>
+          <textarea id="modalClaimInput" rows="3" placeholder="e.g., Seller sent defective/wrong item, or agent chose incorrect specifications..."></textarea>
+        </div>
+        <button id="btnDiagnoseCase" class="btn btn-accent full-width">Diagnose Root Cause & Suggest Settlement</button>
+
+        <div id="modalDiagnosisBox" class="diagnosis-box hidden">
+          <h4>Diagnosis Results</h4>
+          <div class="diag-row"><strong>Root Cause:</strong> <span id="diagCause">-</span></div>
+          <div class="diag-row"><strong>Rules Range:</strong> <span id="diagRange">-</span></div>
+          <div class="diag-row"><strong>Clamped Settlement:</strong> <span id="diagPct">-</span> (<span id="diagAmount">-</span>)</div>
+          <div class="diag-row"><strong>Explanation:</strong> <p id="diagExplanation">-</p></div>
+
+          <div class="modal-actions">
+            <button id="btnAcceptRefund" class="btn btn-success">✓ Accept Partial Refund</button>
+            <button id="btnRejectCase" class="btn btn-danger">✕ Reject Case</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="app-footer">
+    <p>Mandate Policy Engine & Autonomous PayPal Vault Execution • Zero LLM in Money Path</p>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
+
